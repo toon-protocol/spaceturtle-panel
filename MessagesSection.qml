@@ -16,6 +16,10 @@ Item {
 
   // The conversation showing, or null while the list of them shows.
   readonly property var conversation: service.conversationById(service.conversationId)
+  readonly property var hints: conversation
+    ? [["j/k", "move"], ["Enter", "author"], ["Esc", "back"]]
+    : [["j/k", "move"], ["Enter", "open"], ["a", "author"]]
+  readonly property bool typing: false
   readonly property var rows: conversation ? conversation.messages : service.conversations
   readonly property int cursor: Math.max(0, Math.min(service.messageCursor, rows.length - 1))
   property bool scrollOnCursor: true

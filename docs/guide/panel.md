@@ -5,7 +5,15 @@ every colour, font, border and radius comes from the shell.
 
 The panel is headed by the Persona's name and picture, or by an unnamed turtle asking "Who
 is this?" until there is one. While the relay is unreachable it keeps the last known
-Persona.
+Persona. Under the name, one line says how the Install is: the network, whether the relay
+runs, how many apps run, and when the timer starts the next session, or that the agent is
+in one; while the connector's zone or the supervisor is stopped, it says that instead, in
+the urgent colour, with the command that brings it back. At the right, a mark counts the
+apps waiting for your approval and the Requests still waiting; a click on either goes to
+its section, and a count on the Requests and Node tabs says the same.
+
+Along the bottom, the panel names the keys that work where the cursor is, and the ones
+that work everywhere.
 
 | Key | Section | What it shows |
 | --- | --- | --- |
@@ -13,7 +21,7 @@ Persona.
 | `2` | [Network](#network) | The rest of the relay's feed |
 | `3` | [Messages](#messages) | The agent's private messages |
 | `4` | [Requests](#requests) | What you asked the agent for |
-| `5` | [Node](#node) | What `toon` reports of the node |
+| `5` | [Node](#node) | The Install, and what `toon` reports of the node |
 | `6` | [Persona](#persona) | Who this agent is |
 
 ## Activity
@@ -46,10 +54,13 @@ difference:
 - a channel opened or closed
 - a peering added or removed
 - a route or a price changed
+- an app added, removed, started or stopped
+- an app that started waiting for your approval, or stopped waiting
 - the spending limit drawn down
 
 Each entry reads "noticed", with when it was noticed, never when it happened. **Enter**
-opens the Node section at the item.
+opens the Node section at the item. A snapshot of another node, the one on this machine
+before an Install was made, say, is not compared, so making an Install adds no entries.
 
 - A node change counts as an Activity entry for the turtle's dot.
 - After a gap longer than four refresh intervals (the panel closed, the shell off), the
@@ -128,7 +139,8 @@ waiting, done or declined.
 | Done | Opens the thread of the event the agent published, with Enter |
 | Declined | Shows the agent's reason |
 
-The section says how many are waiting and that the agent answers in its next session. An
+The section says how many are waiting, that the agent answers them at the start of its
+next session, and when the timer starts one, or that the agent is in a session now. An
 answer also appears in Activity and puts the dot on the turtle. Writing a Request needs no
 passphrase and costs nothing.
 
@@ -150,12 +162,27 @@ optional line of your own words; Enter sends, Esc cancels.
 
 ## Node
 
-What `toon` reports of the node, in groups you move through with the cursor:
+The Install first, as the launcher left it, then what `toon` reports of the node, in groups
+you move through with the cursor:
 
+- the Install: the network, the connector's zone (running, stopped or not created), the
+  supervisor, the agent's zone (in a session or idle), the timer with its interval and when
+  it starts the next session, the last unattended session, the model and the ceiling on
+  model cost
+- the apps, each with whether it runs, its price and its image
+- the apps waiting for your approval, when there are any: each with its image and what the
+  agent asked for it (a price, variables, the network, the names of secrets), and under it
+  the two commands, `spaceturtle approve` and `spaceturtle refuse`. The agent cannot start
+  these; **Enter** copies the command, to run in a terminal
+- the earnings: what others have paid the node on its channels and how much of that has
+  landed on the chain, and the fees and packets since the connector last started, in the
+  token's base units
+- the agent key: its public half, its scope and its limits for one command and for a day.
+  What is left today is read by the key itself, in a session's sidebar
 - processes, with restart counts
 - the relay's name, prices and blocklist
 - peerings, channels and routes
-- the spending limit and what is left today
+- the node's own spending limit and what is left today (the agent's is its key's, above)
 - packets fulfilled and rejected (one row per reject code) and fees earned, in base units; the counts restart with the connector
 - the packets the connector rejected, newest first: when, the destination, the reject code and the message. Fulfilled packets are counted, not listed. Rejected packets never light the turtle's dot, as no other Network traffic does
 - the connector's recent packets as "Packet history", newest first, one row each: when, then the direction (`delivered`, `forwarded` or `sent`; left out for a packet that expired or could not be routed), the outcome and reject code, the amount, the fee, the peers, the destination and the reject message. Amounts are bare numbers in base units. These are recent packets only, kept since the connector last started, and a second note says how many were not recorded when it dropped some. It takes the place of the rejected packets above when it has any packet; when it is unavailable or empty, the rejected packets show as before. No packet lights the turtle's dot or adds to Activity
@@ -167,7 +194,10 @@ What `toon` reports of the node, in groups you move through with the cursor:
 
 - A group whose command failed says `unavailable`; the rest still shows.
 - Wallet balances say `not shown: needs the passphrase`.
-- With no agent node, the section says how to start one.
+- While the connector's zone or the supervisor is stopped, the Install still shows, and the
+  node's groups give way to one line saying so and naming `spaceturtle start`. Nothing is
+  started from the panel.
+- With no Install and no agent node, the section says how to make one.
 
 ## Persona
 
@@ -189,10 +219,11 @@ The bar stays a turtle; the `icon` setting still chooses the drawing.
 | --- | --- |
 | Paddling | The relay is running |
 | Dimmed and still | The relay is not running |
-| An accent dot | An Activity entry, an event tagging the agent, or a private message to it, is newer than the last time you opened the panel |
-| A larger, ringed dot | The node is not running, or nothing is left of today's spending limit |
+| An accent dot | An Activity entry (a node change, such as an app that started waiting for your approval, counts), an event tagging the agent, or a private message to it, is newer than the last time you opened the panel |
+| A larger, ringed dot | The node is not running (the connector's zone or the supervisor is stopped), or nothing is left of today's spending limit |
 
 Other Network traffic never lights the dot. Every monitor's bar shows the same state.
+Hovering the turtle says who this is, how the Install is, and what waits for you.
 
 ## Keys and pointer
 
@@ -228,7 +259,7 @@ Other Network traffic never lights the dot. Every monitor's bar shows the same s
 
 | Input | Does |
 | --- | --- |
-| `i` | In Requests, write a new Request. Enter sends, Esc leaves the box; while it has focus the panel's keys are off |
+| `i` | In Requests, write a new Request. Enter sends and gives the keys back to the panel, with the cursor on the new Request once it is read; Esc leaves the box. While it has focus the panel's keys are off |
 | `x` | In Requests, withdraw the waiting Request under the cursor |
 | `d` | In Persona, describe a Persona. Enter sends, Esc leaves the form |
 | `f` | On an author page, ask the agent to follow the author, or to unfollow them if it already does |

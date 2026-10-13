@@ -14,6 +14,7 @@ Item {
   readonly property color dim: Qt.darker(Color.foreground, 1.5)
 
   readonly property var requests: service.requests
+  readonly property var hints: [["i", "write a Request"], ["Enter", "open"], ["x", "withdraw"]]
   readonly property int cursor: Math.max(0, Math.min(service.requestCursor, requests.length - 1))
   property bool scrollOnCursor: true
   // Shown briefly when a done Request's event is not on the relay.
@@ -28,13 +29,21 @@ Item {
     var n = service.waitingCount
     var waiting = n === 0 ? "No Requests are waiting." : (n === 1 ? "1 Request is waiting." : n + " Requests are waiting.")
     var when = service.lastActive > 0 ? " Your agent was last active " + ago(service.lastActive) + "." : ""
-    return waiting + " Your agent answers them in its next session." + when
+    var next = ""
+    if (service.installPresent && service.install.agent_zone === "in a session") next = " It is in a session now."
+    else if (service.nextSession > 0) next = " The timer starts one " + service.inWords(service.nextSession) + "; spaceturtle starts one now."
+    return waiting + " Your agent answers them at the start of its next session." + next + when
   }
 
+  // Enter sends, and the keys go back to the panel, with the cursor on the
+  // new Request once it is read: the newest is first.
   function submit() {
     if (input.text.trim() === "") return
     service.submitRequest(input.text)
     input.text = ""
+    root.scrollOnCursor = true
+    service.requestCursor = 0
+    root.leaveInput()
   }
 
   function move(dy) {

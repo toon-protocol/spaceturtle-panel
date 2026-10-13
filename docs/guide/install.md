@@ -8,10 +8,9 @@ installed and signed in to first, then `spaceturtle start`.
 
 - **Omarchy** with the Quickshell-based shell (the `omarchy plugin` commands). Built
   against Omarchy 4.0.4; see [Omarchy version](../development.md#omarchy-version).
-- **A running agent node**: [`toon`](https://github.com/toon-protocol/toon_cli) on `PATH`
-  or in `~/.local/bin`, and `toon up`. The panel cannot yet read the agent node of an
-  Install, which runs inside the connector's zone
-  ([ADR 0003](https://github.com/toon-protocol/spaceturtle/blob/main/docs/adr/0003-the-agent-holds-no-key-that-pays.md)).
+- **An Install**, made by `spaceturtle start`, or **a running agent node** of your own:
+  [`toon`](https://github.com/toon-protocol/toon_cli) on `PATH` or in `~/.local/bin`, and
+  `toon up`. See [Reading an Install](#reading-an-install).
 - **`jq`, `curl` and `wl-copy`**. `wl-copy` is only used for copying values.
 
 ## 1. Add the plugin
@@ -23,10 +22,12 @@ omarchy plugin add https://github.com/toon-protocol/spaceturtle-panel.git --enab
 This clones the repository into `~/.config/omarchy/plugins/toon.spaceturtle` and puts the
 turtle in the bar.
 
-## 2. Install the agent's skill
+## 2. Install the agent's skill, for an agent that is not an Install
 
 The [`being-observed`](https://github.com/toon-protocol/spaceturtle/blob/main/skills/being-observed/SKILL.md) skill tells the agent that it
-is being watched. Without it the agent does not know the Requests are there.
+is being watched. An Install has it already: the agent definition names it, and
+`docker-agent` fetches it for each session. Another agent does not know the Requests are
+there without it.
 
 ```sh
 npx skills add toon-protocol/spaceturtle
@@ -89,3 +90,29 @@ Settings go on the plugin's entry in `~/.config/omarchy/shell.json`:
 ```sh
 omarchy plugin update toon.spaceturtle
 ```
+
+## Reading an Install
+
+The panel recognises an Install by the launcher's settings file,
+`~/.config/spaceturtle/launcher.conf`, or by the agent's directories under
+`~/.local/state/spaceturtle/agent/`. With either:
+
+- Every `toon` command, the relay query and the fetch of the relay's NIP-11 document run
+  inside the connector's zone, with the launcher's own microsandbox
+  (`~/.local/share/spaceturtle/msb/bin/msb exec`), as `spaceturtle status` runs them. No
+  command is given the passphrase, so nothing the panel runs can open the wallet.
+- A zone that is stopped is left stopped. The Node section then says so and names the
+  command that brings it back; the turtle carries the ringed dot.
+- The agent's public key, its Renderers and your Requests are read from
+  `~/.local/state/spaceturtle/agent/config/` and `~/.local/state/spaceturtle/agent/state/`,
+  which the launcher mounts into the agent's zone as the agent's `~/.config/spaceturtle`
+  and `~/.local/state/spaceturtle`. The panel never enters the agent's zone.
+- The timer, the model and the ceiling come from `launcher.conf` and `systemctl --user`;
+  the last unattended session from `~/.local/state/spaceturtle/last-unattended`.
+
+Without either, the panel reads a node of your own through `toon` on `PATH`, the public
+key and the Renderers from `~/.config/spaceturtle/`, and the Requests from
+`~/.local/state/spaceturtle/requests/`. The same environment variables the launcher
+honours (`SPACETURTLE_STATE_DIR`, `SPACETURTLE_CONFIG_DIR`, `SPACETURTLE_MSB_HOME`,
+`SPACETURTLE_ZONE`, `SPACETURTLE_AGENT_ZONE`) move all of this; see
+[How it gets its data](data.md).

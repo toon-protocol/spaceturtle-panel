@@ -16,6 +16,7 @@ Item {
 
   readonly property var persona: service.persona
   readonly property bool named: persona !== null
+  readonly property var hints: [["d", "describe"], ["Enter", "choose"]]
   readonly property int waiting: service.requests.filter(function(r) { return r.kind === "persona" && r.state === "waiting" }).length
 
   // The two things the Observer can do, in cursor order.

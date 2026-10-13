@@ -9,12 +9,14 @@ Flow {
   id: root
 
   property var names: []
+  // One short mark per section, "" for none: how many Requests wait, say.
+  property var badges: []
   // The open section, numbered from 1 as its key is.
   property int current: 1
 
   signal selected(int number)
 
-  spacing: Style.spacing.sm
+  spacing: Style.spacing.xs
 
   Repeater {
     model: root.names
@@ -27,7 +29,8 @@ Flow {
       readonly property color dim: Qt.darker(Color.foreground, 1.5)
 
       current: index + 1 === root.current
-      width: label.implicitWidth + Style.spacing.controlPaddingX * 2
+      // Tighter than a control, so the six fit on one line with their marks.
+      width: label.implicitWidth + Style.space(7) * 2
       height: label.implicitHeight + Style.spacing.controlPaddingY * 2
 
       Row {
@@ -54,6 +57,18 @@ Flow {
           font.family: Style.font.family
           font.pixelSize: Style.font.body
           font.bold: tab.current
+        }
+
+        Text {
+          readonly property string badge: tab.index < root.badges.length ? String(root.badges[tab.index] || "") : ""
+          visible: badge !== ""
+          textFormat: Text.PlainText
+          anchors.baseline: name.baseline
+          text: badge
+          color: Color.accent
+          font.family: Style.font.family
+          font.pixelSize: Style.font.caption
+          font.bold: true
         }
       }
 

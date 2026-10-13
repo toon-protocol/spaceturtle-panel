@@ -31,6 +31,22 @@ Item {
   readonly property int section: service ? service.section : activitySection
   // Who this Install is, or null: the header shows an unnamed turtle.
   readonly property var personaProfile: service && service.persona ? service.persona : null
+  // A mark on a tab: how many Requests wait, how many apps wait for approval.
+  readonly property var badges: {
+    var marks = ["", "", "", "", "", ""]
+    if (!service) return marks
+    if (service.waitingCount > 0) marks[requestsSection - 1] = String(service.waitingCount)
+    if (service.waitingApps > 0) marks[nodeSection - 1] = String(service.waitingApps)
+    return marks
+  }
+  // Whether a text box of the section has the keys.
+  readonly property bool typing: cursorSection ? cursorSection.typing === true : false
+  // The keys of the section showing, then the ones that work everywhere.
+  readonly property var hints: {
+    if (typing) return [["Enter", "send"], ["Esc", "leave the box"]]
+    var own = cursorSection && cursorSection.hints ? cursorSection.hints : []
+    return own.concat([["1-6", "section"], ["r", "refresh"], ["Esc", "close"]])
+  }
   // The section that has a cursor to move, if the one showing does.
   readonly property var cursorSection: section === activitySection ? activity.item
     : (section === networkSection ? network.item
@@ -78,6 +94,36 @@ Item {
   onServiceChanged: syncLooking()
   Component.onDestruction: if (service) service.looking = false
 
+  // A small bordered mark in the header; a click goes where it points.
+  component Pill: BorderSurface {
+    id: pill
+    property string text: ""
+    property bool accent: false
+    signal clicked()
+    implicitWidth: pillText.implicitWidth + Style.space(10)
+    implicitHeight: pillText.implicitHeight + Style.space(5)
+    radius: Style.cornerRadius
+    color: pill.accent ? Qt.alpha(Color.accent, 0.18) : "transparent"
+    borderSpec: Border.controlSpec("normal", pill.accent ? Color.accent : Color.foreground, Color.accent)
+
+    Text {
+      id: pillText
+      anchors.centerIn: parent
+      textFormat: Text.PlainText
+      text: pill.text
+      color: pill.accent ? Color.accent : root.dim
+      font.family: Style.font.family
+      font.pixelSize: Style.font.caption
+      font.bold: true
+    }
+
+    MouseArea {
+      anchors.fill: parent
+      cursorShape: Qt.PointingHandCursor
+      onClicked: pill.clicked()
+    }
+  }
+
   FloatingWindow {
     id: window
     // Hyprland window rules match on this; see docs/guide/install.md.
@@ -107,6 +153,8 @@ Item {
           else root.cursorSection.activate()
         }
         onActivateRequested: if (root.cursorSection) root.cursorSection.activate()
+        // The catcher reports x as a delete, not as a text key; the sections read it as x.
+        onDeleteRequested: if (root.cursorSection) root.cursorSection.key("x")
         onCloseRequested: root.back()
         onTabRequested: function(direction) {
           var count = root.sections.length
@@ -126,43 +174,95 @@ Item {
           anchors.margins: Style.spacing.panelPadding
           spacing: Style.spacing.panelGap
 
-          // Each Install is called by its Persona; until it has one, an unnamed turtle.
-          Row {
-            spacing: Style.space(10)
+          // Each Install is called by its Persona; until it has one, an unnamed
+          // turtle. Under the name, one line on how the Install is; at the
+          // right, what waits for the Observer.
+          Item {
+            width: parent.width
+            implicitHeight: Math.max(picture.height, heroLabels.implicitHeight)
 
             Item {
-              width: Style.space(32)
-              height: Style.space(32)
+              id: picture
+              width: Style.space(36)
+              height: Style.space(36)
+              anchors.left: parent.left
+              anchors.verticalCenter: parent.verticalCenter
 
               Avatar {
                 visible: root.personaProfile !== null
-                size: Style.space(32)
+                size: Style.space(36)
                 source: root.personaProfile ? root.personaProfile.picture : ""
                 label: root.personaProfile ? root.personaProfile.name : ""
               }
               TurtleIcon {
                 visible: root.personaProfile === null
                 anchors.centerIn: parent
-                iconSize: Style.space(28)
+                iconSize: Style.space(30)
                 variant: root.service ? root.service.iconVariant : 1
+                swimming: root.service ? root.service.online : false
               }
             }
 
-            Text {
+            Column {
+              id: heroLabels
+              anchors.left: picture.right
+              anchors.leftMargin: Style.space(12)
+              anchors.right: pills.left
+              anchors.rightMargin: Style.space(8)
               anchors.verticalCenter: parent.verticalCenter
-              textFormat: Text.PlainText
-              text: root.personaProfile ? root.personaProfile.name : "Who is this?"
-              color: root.personaProfile ? Color.foreground : root.dim
-              font.family: Style.font.family
-              font.pixelSize: Style.font.title
-              font.bold: root.personaProfile !== null
-              font.italic: root.personaProfile === null
+              spacing: Style.space(3)
+
+              Text {
+                width: parent.width
+                textFormat: Text.PlainText
+                elide: Text.ElideRight
+                text: root.personaProfile ? root.personaProfile.name : "Who is this?"
+                color: root.personaProfile ? Color.foreground : root.dim
+                font.family: Style.font.family
+                font.pixelSize: Style.font.title
+                font.bold: root.personaProfile !== null
+                font.italic: root.personaProfile === null
+              }
+
+              Text {
+                width: parent.width
+                textFormat: Text.PlainText
+                elide: Text.ElideRight
+                text: (root.service ? root.service.summary : "").toUpperCase()
+                color: root.service && root.service.urgent ? Color.urgent : root.dim
+                font.family: Style.font.family
+                font.pixelSize: Style.font.caption
+                font.bold: true
+                font.letterSpacing: 1.2
+              }
+            }
+
+            // What waits for the Observer: apps to approve, Requests still open.
+            Row {
+              id: pills
+              anchors.right: parent.right
+              anchors.verticalCenter: parent.verticalCenter
+              spacing: Style.space(6)
+
+              Pill {
+                visible: root.service && root.service.waitingApps > 0
+                text: root.service ? root.service.waitingApps + (root.service.waitingApps === 1 ? " app to approve" : " apps to approve") : ""
+                accent: true
+                onClicked: root.showSection(root.nodeSection)
+              }
+              Pill {
+                visible: root.service && root.service.waitingCount > 0
+                text: root.service ? root.service.waitingCount + " waiting" : ""
+                accent: false
+                onClicked: root.showSection(root.requestsSection)
+              }
             }
           }
 
           SectionTabs {
             width: parent.width
             names: root.sections
+            badges: root.badges
             current: root.section
             onSelected: function(number) { root.showSection(number) }
           }
@@ -170,12 +270,31 @@ Item {
           PanelSeparator {}
         }
 
+        // The keys that work where the cursor is, along the bottom.
+        Column {
+          id: foot
+          anchors.bottom: parent.bottom
+          anchors.left: parent.left
+          anchors.right: parent.right
+          anchors.margins: Style.spacing.panelPadding
+          anchors.topMargin: 0
+          spacing: Style.spacing.lg
+
+          PanelSeparator {}
+
+          KeyHints {
+            width: parent.width
+            hints: root.hints
+          }
+        }
+
         Item {
           anchors.top: head.bottom
           anchors.left: parent.left
           anchors.right: parent.right
-          anchors.bottom: parent.bottom
+          anchors.bottom: foot.top
           anchors.margins: Style.spacing.panelPadding
+          anchors.bottomMargin: Style.spacing.lg
 
           // Waits for the service, so the section never has to ask whether it has one.
           Loader {

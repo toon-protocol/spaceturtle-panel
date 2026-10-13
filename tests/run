@@ -48,6 +48,8 @@ case "$1 $2" in
   "message list")
     # A toon without the command answers 2; $STUB_DIR/messages is what a newer one prints.
     [[ -r $STUB_DIR/messages ]] && cat "$STUB_DIR/messages" || exit 2 ;;
+  "agent-key list")
+    [[ -r $STUB_DIR/agentkeys ]] && cat "$STUB_DIR/agentkeys" || exit 1 ;;
   "event query")
     case "$*" in
       *'"ids"'*) if [[ -r $STUB_DIR/pool ]]; then jq -c --argjson f "$5" '{events: [.events[] | select(.id as $i | $f.ids | index($i))]}' "$STUB_DIR/pool"
@@ -221,7 +223,7 @@ echo '{"subscriptions":["wss://other"]}' > "$STUB_DIR/held"
 echo '{"toon_app":"relay","packets":{"fulfilled":12,"rejected":3},"rejects":{"T04":1,"F02":2},"fees_earned":"40"}' > "$STUB_DIR/packetcount"
 printf '{"lines":[%s]}\n' "$(jq -cn '[range(30) | "line \(.)"] | map(tojson) | join(",")' -r)" > "$STUB_DIR/logs--json"
 out=$("$root/relay-events")
-check "state: supervisor, connector and each app with restarts" '.state.status == {supervisor: {running: true, restarts: 1}, connector: {running: false, restarts: 0}, apps: [{name:"relay",running:true,restarts:2},{name:"chat",running:false,restarts:0}]}'
+check "state: supervisor, connector and each app with restarts, price and image" '.state.status == {supervisor: {running: true, restarts: 1}, connector: {running: false, restarts: 0}, apps: [{name:"relay",running:true,restarts:2,price:"",image:""},{name:"chat",running:false,restarts:0,price:"",image:""}]}'
 check "state: relay name, prices and blocklist" '.state.relay == {name:"Shelly", prices:[{name:"write",price:"10"}], blocklist:["badkey"]}'
 check "state: peers" '.state.peers == [{id:"alice",direction:"outbound",status:"connected"}]'
 check "state: channels with collateral" '.state.channels == [{peer:"alice",direction:"outbound",status:"open",collateral:"500"}]'
@@ -313,6 +315,99 @@ check "state: a failing status is unavailable, the rest shows" '.state.status ==
 echo '{}' > "$STUB_DIR/status"
 out=$("$root/relay-events")
 check "state: no agent node, no state" '.state == null and .online == false'
+
+# --- an Install: the node inside the connector's zone, the agent's files under agent/
+# A microsandbox that lists the zones in $STUB_DIR/zones and runs `exec ... -- sh -c LINE`
+# with the stub toon as the zone's `toon`. Anything else it refuses.
+install_msb() {
+  mkdir -p "$tmp/msb/bin" "$STUB_DIR/zonebin"
+  ln -sf "$SPACETURTLE_TOON" "$STUB_DIR/zonebin/toon"
+  cat > "$tmp/msb/bin/msb" <<'STUB'
+#!/bin/bash
+echo "msb $*" >> "$STUB_DIR/calls"
+case ${1:-} in
+  ls) [[ -r $STUB_DIR/zones ]] && cat "$STUB_DIR/zones" || echo '[]' ;;
+  exec) shift; while [[ ${1:-} == --* ]]; do shift; done; zone=$1; shift; [[ ${1:-} == -- ]] && shift
+    [[ ${1:-} == sh && ${2:-} == -c ]] || { echo "unexpected msb exec $*" >&2; exit 1; }
+    jq -e --arg z "$zone" '.[] | select(.name == $z and .status == "Running")' "$STUB_DIR/zones" >/dev/null 2>&1 || { echo "zone $zone is not running" >&2; exit 1; }
+    PATH="$STUB_DIR/zonebin:$PATH" bash -c "$3" ;;
+  *) echo "unexpected msb $*" >&2; exit 1 ;;
+esac
+STUB
+  chmod +x "$tmp/msb/bin/msb"
+  export SPACETURTLE_MSB=$tmp/msb/bin/msb SPACETURTLE_MSB_HOME=$tmp/msb
+  # A systemctl that says the timer is active and next runs at 2000.
+  cat > "$tmp/bin/systemctl" <<'STUB'
+#!/bin/bash
+case "$*" in
+  *is-active*) exit 0 ;;
+  *list-timers*) echo '[{"next":2000000000,"left":1,"last":0,"passed":0,"unit":"spaceturtle.timer","activates":"spaceturtle.service"}]' ;;
+  *) exit 1 ;;
+esac
+STUB
+  chmod +x "$tmp/bin/systemctl"
+  export SPACETURTLE_SYSTEMCTL=$tmp/bin/systemctl
+}
+new_env; install_toon; install_msb
+printf 'model=anthropic/claude-sonnet-5-5\ninterval=12h\nceiling=2\nport=47100\ntimer=on\n' > "$SPACETURTLE_CONFIG_DIR/launcher.conf"
+mkdir -p "$SPACETURTLE_STATE_DIR/agent/config" "$SPACETURTLE_STATE_DIR/agent/state/requests"
+echo "$pk" > "$SPACETURTLE_STATE_DIR/agent/config/agent-pubkey"
+echo "$other" > "$SPACETURTLE_CONFIG_DIR/agent-pubkey"
+echo '[{"name":"st-connector","status":"Running","image":"c"},{"name":"st-agent","status":"Stopped","image":"a"}]' > "$STUB_DIR/zones"
+echo '{"agent_node":{"supervisor":{"running":true},"pending_apps":[{"name":"chat","image":"ghcr.io/x/chat:1","price":500,"secrets":{"variables":["API_KEY"],"files":[]},"allowances":{"allow_egress":true}},{"name":"old","image":"x","refused":true}],"toon_apps":[{"name":"relay","connector":{"running":true,"restarts":3},"apps":[{"name":"relay","running":true,"read_address":"127.0.0.1:7100","price":1},{"name":"store","running":false,"image":"ghcr.io/toon-protocol/store:release","price":1000}]}]}}' > "$STUB_DIR/status"
+echo '{"relay":{"name":"Shelly"}}' > "$STUB_DIR/config"
+echo '{"events":[]}' | tee "$STUB_DIR/events" "$STUB_DIR/profiles" > "$STUB_DIR/follows"
+echo '{"channels":[{"counterparty":"0xaa","direction":"inbound","status":"open","collateral":5,"watermark":40,"landed":30},{"counterparty":"0xbb","direction":"inbound","status":"open","collateral":5,"watermark":2,"landed":0},{"counterparty":"0xcc","direction":"outbound","status":"open","collateral":5,"watermark":99,"landed":99}]}' > "$STUB_DIR/channellist"
+echo '{"toon_app":"relay","packets":{"fulfilled":7,"rejected":0},"rejects":{},"fees_earned":"12"}' > "$STUB_DIR/packetcount"
+echo '{"agent_keys":[{"public_key":"'"$other"'","private_key":"NEVER","scope":["status","send"],"spending_limit":{"per_command":10,"per_day":100},"toon_apps":["relay"]}]}' > "$STUB_DIR/agentkeys"
+echo '{"limits":{"per_command":"10000000","per_day":"100000000","remaining_today":"5"}}' > "$STUB_DIR/limitshow"
+echo '{"routes":[{"handler_url":"http://127.0.0.1:1/w","prefix":"g.toon.me.relay","price":1}],"forwarding_routes":[{"peer_id":"proxy","prefix":"g.toon.relay","price":0}]}' > "$STUB_DIR/routelist"
+printf '{"lines":["{\\"timestamp\\":\\"2026-10-13T16:23:56.456337Z\\",\\"level\\":\\"INFO\\",\\"fields\\":{\\"message\\":\\"connector listening\\"}}","plain line"]}\n' > "$STUB_DIR/logs--json"
+echo '{"name":"Shelly relay","toon":{"ilp_address":"g.toon.me.relay","connector_url":"http://me.anyone/ilp"}}' > "$STUB_DIR/nip11"
+"$root/request" add -- "to the Install" >/dev/null
+out=$("$root/relay-events")
+check "install: present, with the zones, the supervisor and the network" '.install.present == true and .install.connector_zone == "running" and .install.agent_zone == "idle" and .install.supervisor == true and .install.network == "devnet"'
+check "install: the timer, the model and the ceiling from the settings" '.install.timer == {on: true, interval: "12h", active: true, next: 2000, last_unattended: null} and .install.model == "anthropic/claude-sonnet-5-5" and .install.ceiling == "2"'
+check "install: the apps, with price and image" '.install.apps == [{name:"relay",running:true,price:"1",image:"",toon_app:"relay"},{name:"store",running:false,price:"1000",image:"ghcr.io/toon-protocol/store:release",toon_app:"relay"}]'
+check "install: the apps waiting for approval, with what they ask for; a refused one is not waiting" '.install.waiting_apps == [{name:"chat",image:"ghcr.io/x/chat:1",since:null,secrets:["API_KEY"],asks:"price 500; the network; secrets API_KEY"}]'
+check "install: the earnings from the inbound channels and the packet count" '.install.earnings == {received: 42, landed: 30, fees: "12", packets: 7}'
+check "install: the agent key, never its private half" '.install.agent_key == {public_key: "'"$other"'", scope: ["status","send"], per_command: "10", per_day: "100", toon_apps: ["relay"]} and (tojson | test("NEVER") | not)'
+check "install: the public key comes from the agent directory, not the config folder" ".self == \"$pk\""
+check "install: the Requests come from the agent directory" '(.requests | length) == 1 and .requests[0].text == "to the Install"'
+[[ -f $SPACETURTLE_STATE_DIR/agent/state/requests/$(jq -r '.requests[0].id' <<<"$out").json ]] || { echo "FAIL install: request did not write into agent/state/requests"; fails=$((fails + 1)); }
+check "install: the node reads through the zone" '.online == true and .name == "Shelly" and .state.status.connector == {running: true, restarts: 3}'
+check "install: the limit of the node, with what is left today" '.state.limits.remaining_today == "5"'
+check "install: the routes the node forwards are listed with its own" '[.state.routes[].prefix] == ["g.toon.me.relay","g.toon.relay"] and .state.routes[1].peer == "proxy"'
+check "install: a log line written as JSON reads as time, level and message" '.state.logs == ["16:23:56  info  connector listening","plain line"]'
+check "install: the ILP address and connector from the NIP-11 document toon 0.2.0 serves" '.node == {ilp_address: "g.toon.me.relay", connector: "http://me.anyone/ilp"}'
+grep -q "^msb exec --quiet --no-stdin st-connector -- sh -c toon status --json" "$STUB_DIR/calls" || { echo "FAIL install: toon status not run in the zone"; fails=$((fails + 1)); }
+grep -q "logs --json --connector --lines 20 -- 'relay'" "$STUB_DIR/calls" || { echo "FAIL install: the connector's log not read by name"; fails=$((fails + 1)); }
+! grep -q "TOON_PASSPHRASE" "$STUB_DIR/calls" || { echo "FAIL install: a command in the zone was given the passphrase"; fails=$((fails + 1)); }
+! grep -q "^msb start\|^msb create\|^msb stop\|^msb remove" "$STUB_DIR/calls" || { echo "FAIL install: touched a zone"; fails=$((fails + 1)); }
+# A change the next refresh notices: an app that waits, and one that starts.
+echo '{"agent_node":{"supervisor":{"running":true},"pending_apps":[{"name":"chat","image":"ghcr.io/x/chat:1"},{"name":"blog","image":"ghcr.io/x/blog:2"}],"toon_apps":[{"name":"relay","connector":{"running":true},"apps":[{"name":"relay","running":true,"read_address":"127.0.0.1:7100"},{"name":"store","running":true}]}]}}' > "$STUB_DIR/status"
+out=$("$root/relay-events")
+check "install: an app that waits, and one that starts, are node changes" '[.activity[] | select(.node_change == true) | .text] == ["App store is now running","App blog waits for your approval"] and .activity[1].target == {group: "Waiting for your approval", label: "blog"}'
+# The zone stops: the node reads as absent, the Install still shows, and toon on PATH is not asked.
+echo '[{"name":"st-connector","status":"Stopped","image":"c"},{"name":"st-agent","status":"Running","image":"a"}]' > "$STUB_DIR/zones"
+: > "$STUB_DIR/calls"
+out=$("$root/relay-events")
+check "install: a stopped connector's zone is offline and urgent, with the Install still described" '.online == false and .attention == "urgent" and .state == null and .install.connector_zone == "stopped" and .install.agent_zone == "in a session" and .install.supervisor == null and .install.apps == [] and .install.timer.interval == "12h"'
+check "install: a stopped zone keeps the public key and the Requests" ".self == \"$pk\" and (.requests | length) == 1"
+! grep -q "^msb exec" "$STUB_DIR/calls" || { echo "FAIL install: ran a command in a stopped zone"; fails=$((fails + 1)); }
+! grep -q "^status" "$STUB_DIR/calls" || { echo "FAIL install: asked toon on PATH while the zone was stopped"; fails=$((fails + 1)); }
+# No microsandbox at all, but the launcher's settings: still an Install, and offline.
+export SPACETURTLE_MSB=$tmp/msb/bin/missing
+out=$("$root/relay-events")
+check "install: without msb the Install is not created, and the node is offline" '.online == false and .install.present == true and .install.connector_zone == "not created"'
+# The agent directory alone, without the settings file, is an Install too.
+rm "$SPACETURTLE_CONFIG_DIR/launcher.conf"
+out=$("$root/relay-events")
+check "install: the agent directory alone marks an Install" '.install.present == true and .self == "'"$pk"'"'
+# Neither: toon on PATH, and the config folder.
+rm -r "$SPACETURTLE_STATE_DIR/agent"
+out=$("$root/relay-events")
+check "install: with neither, the node is toon on PATH and the key the config folder" ".install == null and .self == \"$other\" and .online == true"
 
 # --- the parts of each kind
 new_env; install_toon; running_relay
@@ -688,7 +783,7 @@ check "requests: malformed files are skipped and the document is whole" '.online
 echo '{"agent_node":{"toon_apps":[{"apps":[{"name":"relay","running":false}]}]}}' > "$STUB_DIR/status"
 out=$("$root/relay-events")
 check "requests: still listed while the relay is not running" '.online == false and (.requests | length) == 3'
-check "requests: without the relay, the answers are the Activity and the last activity" '[.activity[].id] == ["request:2-bb","request:3-cc"] and .last_active == 150'
+check "requests: without the relay, the answers are the Activity and the last activity" '[.activity[] | select(.node_change != true) | .id] == ["request:2-bb","request:3-cc"] and .last_active == 150'
 
 # --- an answered Request: one the agent answered the way the being-observed skill says
 # (https://github.com/toon-protocol/spaceturtle/blob/main/skills/being-observed/SKILL.md)

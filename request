@@ -21,11 +21,19 @@
 # TEXT and ID are arguments, never parsed by a shell. Costs nothing and opens
 # no keystore. Environment, so that tests can run against a temporary home:
 #   SPACETURTLE_STATE_DIR   the state directory (default: ~/.local/state/spaceturtle);
-#                           the queue is its `requests` directory
+#                           the queue is its `requests` directory, or, in an
+#                           Install, `agent/state/requests`, which the launcher
+#                           mounts into the agent's zone
+#   SPACETURTLE_CONFIG_DIR  the config directory (default: ~/.config/spaceturtle),
+#                           where the launcher keeps `launcher.conf`
+# An Install is recognised as relay-events recognises it: by `launcher.conf`
+# or by the `agent` directory.
 set -uo pipefail
 
 state_dir=${SPACETURTLE_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/spaceturtle}
-queue=$state_dir/requests
+config_dir=${SPACETURTLE_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/spaceturtle}
+if [[ -f $config_dir/launcher.conf || -d $state_dir/agent ]]; then queue=$state_dir/agent/state/requests
+else queue=$state_dir/requests; fi
 
 die() { echo "request: $*" >&2; exit 1; }
 command -v jq >/dev/null || die "jq is needed"
