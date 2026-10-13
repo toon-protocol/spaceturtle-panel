@@ -74,6 +74,53 @@ Item {
   // The node's state as `relay-events` reports it; null when there is no agent
   // node. Each group in it is null when its command failed.
   property var nodeState: null
+  // The Install the launcher made on this machine, as `relay-events` reports
+  // it (zones, timer, apps, what waits for approval, earnings, agent key), or
+  // null when the node is `toon` on this machine's PATH.
+  property var install: null
+  readonly property bool installPresent: install !== null && install.present === true
+  readonly property int waitingApps: installPresent && Array.isArray(install.waiting_apps) ? install.waiting_apps.length : 0
+  // How many of the Install's apps run.
+  readonly property int runningApps: installPresent && Array.isArray(install.apps)
+    ? install.apps.filter(function(a) { return a.running === true }).length : 0
+  // The next unattended session, in seconds, or 0 while none is scheduled.
+  readonly property real nextSession: installPresent && install.timer && typeof install.timer.next === "number" ? install.timer.next : 0
+
+  // One line on the state of the Install, for the header and the turtle's tooltip.
+  readonly property string summary: {
+    if (!loaded) return "Loading"
+    if (installPresent) {
+      if (install.connector_zone !== "running") return "Connector's zone " + install.connector_zone + " · spaceturtle start"
+      if (install.supervisor === false) return "Supervisor not running · spaceturtle start"
+      var parts = [install.network || "devnet", online ? "relay running" : "relay not running",
+        runningApps + (runningApps === 1 ? " app" : " apps")]
+      if (install.agent_zone === "in a session") parts.push("agent in a session")
+      else if (install.timer && install.timer.on && nextSession > 0) parts.push("next session " + inShort(nextSession))
+      else if (install.timer && !install.timer.on) parts.push("timer off")
+      if (urgent) parts.push("spending limit used up")
+      return parts.join(" · ")
+    }
+    if (!online) return "Relay not running"
+    return "Relay running · " + events.length + (events.length === 1 ? " event" : " events")
+      + (urgent ? " · spending limit used up" : "")
+  }
+
+  // A time, in seconds, as "in 5 hours" or "now"; read when the report arrives.
+  function inWords(seconds) {
+    var delta = Math.floor(seconds - Date.now() / 1000)
+    if (delta < 60) return "now"
+    var unit = delta < 3600 ? [60, "minute"] : (delta < 86400 ? [3600, "hour"] : [86400, "day"])
+    var n = Math.floor(delta / unit[0])
+    return "in " + n + " " + unit[1] + (n === 1 ? "" : "s")
+  }
+  // The same, short, for the one line of the header: "in 5h".
+  function inShort(seconds) {
+    var delta = Math.floor(seconds - Date.now() / 1000)
+    if (delta < 60) return "now"
+    if (delta < 3600) return "in " + Math.floor(delta / 60) + "m"
+    if (delta < 86400) return "in " + Math.floor(delta / 3600) + "h"
+    return "in " + Math.floor(delta / 86400) + "d"
+  }
   // The Node section's cursor.
   property int nodeCursor: 0
   // The item an Activity entry asked the Node section to stand on, { group, label },
@@ -210,6 +257,7 @@ Item {
     root.requests = reqs
     applyMessages(report.messages)
     root.nodeState = report.state && typeof report.state === "object" ? report.state : null
+    root.install = report.install && typeof report.install === "object" ? report.install : null
     root.online = report.online === true
     root.relayName = report.name || ""
     root.loaded = true

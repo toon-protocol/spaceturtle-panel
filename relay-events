@@ -28,11 +28,26 @@
 # Activity entry, an event tagging the agent, or a private message to it, is
 # newer than the last time the Observer looked) or "urgent" (the node is not running, or nothing is left of today's
 # spending limit); "looked_at" is when the Observer last looked, or null.
+# "install" is what the launcher made on this machine, or null when there is
+# none and the node is `toon` on this machine's PATH: {present, network,
+# connector_zone ("running", "stopped", "not created"), agent_zone ("in a
+# session", "idle", "not created"), supervisor (true, false or null), timer
+# {on, interval, active, next, last_unattended}, model, ceiling, apps [{name,
+# running, price, image, toon_app}], waiting_apps [{name, image, since, asks,
+# secrets}], earnings {received, landed, fees, packets} or null, agent_key
+# {public_key, scope, per_command, per_day, toon_apps} or null}. An Install's
+# node runs inside the connector's zone, a microsandbox virtual machine, so
+# every `toon` command, the relay query and the NIP-11 fetch run in that zone
+# (`msb exec`), as the launcher runs them; the zone is never started from
+# here, so while it is stopped the node reads as absent. The agent's public
+# key, its Renderers and the Requests are read from the two directories the
+# launcher mounts into the agent's zone, under the state folder's `agent/`.
 # Read-only: nothing here opens the keystore, spends, changes state or
 # publishes. Only free `toon` commands are run: status, relay config, peer list,
-# channel list, route list, limit show, packet count, packet list, packet history, relay subscriptions, logs and message
-# list, which prints what the supervisor already opened. Wallet balances are
-# never read (they need the passphrase, ADR 0001).
+# channel list, route list, limit show, packet count, packet list, packet history, relay subscriptions, logs, agent-key
+# list (never a private half) and message list, which prints what the
+# supervisor already opened. Wallet balances are never read (they need the
+# passphrase, ADR 0001), and no command run in the zone is given the passphrase.
 #
 # "packets" is what `toon packet count` prints, since the connector last
 # started: {"fulfilled", "rejected", "rejects": [{"code", "count"}] sorted by
@@ -74,7 +89,19 @@
 #                           `node-snapshot.json`
 #                           (default: ~/.local/state/spaceturtle)
 #   SPACETURTLE_NOW         the time now, in seconds (default: the clock)
+#   SPACETURTLE_MSB_HOME    microsandbox's home, the launcher's (default: ~/.local/share/spaceturtle/msb,
+#                           or ~/.spaceturtle-msb when that is more than 54 characters long)
+#   SPACETURTLE_MSB         the msb program (default: bin/msb in that home)
+#   SPACETURTLE_ZONE        the connector's zone's name (default: st-connector)
+#   SPACETURTLE_AGENT_ZONE  the agent's zone's name (default: st-agent)
+#   SPACETURTLE_SYSTEMCTL   the systemctl program, which reports the timer (default: systemctl)
 #   HOME                    ~/.local/bin is put on PATH
+#
+# An Install is recognised by the launcher's settings file, `launcher.conf` in
+# the config folder, or by the agent's directories, `agent/` in the state
+# folder. With neither, the node is `toon` on PATH, the public key and the
+# Renderers are read from the config folder and the Requests from `requests/`
+# in the state folder.
 #
 # Node changes: `toon` does not report that a channel opened or a price moved, so
 # each run compares the node's state with the snapshot the run before left, and
@@ -91,6 +118,58 @@ toon_cmd=${SPACETURTLE_TOON:-toon}
 config_dir=${SPACETURTLE_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/spaceturtle}
 state_dir=${SPACETURTLE_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/spaceturtle}
 snapshot=$state_dir/node-snapshot.json
+systemctl_=${SPACETURTLE_SYSTEMCTL:-systemctl}
+
+# The Install, if the launcher made one here: its settings, the agent's two
+# directories, and its zones under microsandbox, kept in a home of the launcher's.
+launcher_conf=$config_dir/launcher.conf
+agent_dir=$state_dir/agent
+msb_home=${SPACETURTLE_MSB_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/spaceturtle/msb}
+(( ${#msb_home} <= 54 )) || [[ -n ${SPACETURTLE_MSB_HOME:-} ]] || msb_home=$HOME/.spaceturtle-msb
+msb=${SPACETURTLE_MSB:-$msb_home/bin/msb}
+zone=${SPACETURTLE_ZONE:-st-connector}
+agent_zone=${SPACETURTLE_AGENT_ZONE:-st-agent}
+install=false
+[[ -f $launcher_conf || -d $agent_dir ]] && install=true
+
+# Where the agent writes its public key and its Renderers, and where the
+# Requests wait: in an Install, the directories the agent's zone mounts.
+if $install; then agent_config=$agent_dir/config; queue=$agent_dir/state/requests
+else agent_config=$config_dir; queue=$state_dir/requests; fi
+
+# What microsandbox lists, and the state of a zone in it.
+zones='[]'
+if $install && [[ -x $msb ]]; then
+  zones=$(MSB_HOME=$msb_home "$msb" ls --format json 2>/dev/null)
+  jq -e 'type == "array"' <<<"$zones" >/dev/null 2>&1 || zones='[]'
+fi
+zone_state() {
+  jq -r --arg z "$1" '[.[] | objects | select(.name == $z)] | first
+    | if . == null then "not created" elif ((.status | strings | ascii_downcase) == "running") then "running" else "stopped" end' <<<"$zones" 2>/dev/null || echo "not created"
+}
+connector_state=$(zone_state "$zone")
+agent_state=$(zone_state "$agent_zone")
+
+# Quotes a value for the shell that runs the node's commands.
+sh_quote() { printf "'%s'" "${1//\'/\'\\\'\'}"; }
+with_timeout() { if command -v timeout >/dev/null; then timeout "$@"; else shift; "$@"; fi; }
+export SPACETURTLE_TOON_CMD=$toon_cmd
+# Runs one shell line where the node is: in the connector's zone, as the
+# launcher does, or on this machine. Nothing in the zone is given the passphrase.
+# A zone that is not running is left alone, and the line fails.
+node_sh() {
+  if $install; then
+    [[ $connector_state == running && -x $msb ]] || return 1
+    MSB_HOME=$msb_home with_timeout 15 "$msb" exec --quiet --no-stdin "$zone" -- sh -c "$1"
+  else
+    with_timeout 10 bash -c 'toon() { command "$SPACETURTLE_TOON_CMD" "$@"; }; '"$1"
+  fi
+}
+# Whether the node can be asked anything at all.
+node_reachable() {
+  if $install; then [[ $connector_state == running && -x $msb ]]
+  else command -v "$toon_cmd" >/dev/null; fi
+}
 
 limit=${1:-40}
 [[ $limit =~ ^[0-9]+$ ]] || limit=40
@@ -108,8 +187,8 @@ urgent=false
 # listed whether or not the relay runs. The id is the file's name.
 read_requests() {
   local file
-  [[ -d $state_dir/requests ]] || { echo '[]'; return; }
-  for file in "$state_dir"/requests/*.json; do
+  [[ -d $queue ]] || { echo '[]'; return; }
+  for file in "$queue"/*.json; do
     [[ -f $file ]] || continue
     jq -ce --arg id "$(basename "$file" .json)" '
       select(type == "object"
@@ -138,8 +217,8 @@ requests=$(read_requests)
 
 # The agent identity's public key, from a file the agent writes during setup.
 self=
-if [[ -r $config_dir/agent-pubkey ]]; then
-  read -r self < "$config_dir/agent-pubkey" || true
+if [[ -r $agent_config/agent-pubkey ]]; then
+  read -r self < "$agent_config/agent-pubkey" || true
   [[ $self =~ ^[0-9a-f]{64}$ ]] || self=
 fi
 
@@ -159,21 +238,20 @@ offline() {
   jq -cn --argjson requests "${requests:-[]}" --argjson messages "${messages:-$no_messages}" \
     --argjson state "${state:-null}" --argjson looked "${looked_at:-null}" \
     --argjson answered "$(request_activity "$self" "${requests:-[]}")" \
-    --argjson changes "$changes" --argjson urgent "$urgent" \
+    --argjson changes "$changes" --argjson urgent "$urgent" --arg self "$self" \
+    --argjson install "${install_doc:-null}" \
     '($answered | sort_by(-.created_at)) as $activity
-    | {online:false,name:"",self:"",node:{ilp_address:"",connector:""},subscribers:null,state:$state,urgent:$urgent,profiles:[],follows:[],persona:null,
+    | {online:false,name:"",self:$self,node:{ilp_address:"",connector:""},subscribers:null,state:$state,urgent:$urgent,profiles:[],follows:[],persona:null,
        activity:(($activity + $changes) | sort_by(-.created_at)),last_active:($activity[0].created_at? // null),events:[],context:[],requests:$requests,messages:$messages,
-       attention:"urgent",looked_at:$looked}'
+       install:$install,attention:"urgent",looked_at:$looked}'
   exit 0
 }
 
-toon() { command "$toon_cmd" "$@"; }
-
 # The JSON a free toon command printed, or null if it failed, printed nothing
-# or printed an error document.
+# or printed an error document. The arguments are literals, or quoted by the caller.
 toon_json() {
   local out
-  out=$(if command -v timeout >/dev/null; then timeout 10 "$toon_cmd" "$@"; else "$toon_cmd" "$@"; fi 2>/dev/null) || { echo null; return; }
+  out=$(node_sh "toon $*" 2>/dev/null) || { echo null; return; }
   # Several JSON values, one per line, are read as one array of them.
   out=$(jq -cs 'if length == 0 then null elif length == 1 then .[0] else . end | if type == "object" and has("error") then null else . end' <<<"$out" 2>/dev/null)
   echo "${out:-null}"
@@ -185,7 +263,7 @@ toon_json() {
 no_messages='{"readable":false,"reason":"unavailable","supervisor":false,"conversations":[]}'
 read_messages() {
   local out code
-  out=$(if command -v timeout >/dev/null; then timeout 10 "$toon_cmd" message list --limit 200 --json; else "$toon_cmd" message list --limit 200 --json; fi 2>/dev/null)
+  out=$(node_sh "toon message list --limit 200 --json" 2>/dev/null)
   code=$?
   out=$(jq -cs --arg self "$self" --argjson code "$code" '
     def locked($reason): {readable: false, reason: $reason, supervisor: false, conversations: []};
@@ -219,7 +297,7 @@ read_messages() {
 }
 
 relay_query() {
-  toon event query "ws://$read_address" --filter "$1" --json 2>/dev/null | jq -c '.events // []' 2>/dev/null || echo '[]'
+  node_sh "toon event query $(sh_quote "ws://$read_address") --filter $(sh_quote "$1") --json" 2>/dev/null | jq -c '.events // []' 2>/dev/null || echo '[]'
 }
 
 state=null
@@ -252,8 +330,8 @@ state=null
 # byte order) wins a kind.
 read_custom_renderers() {
   local file LC_COLLATE=C
-  [[ -d $config_dir/renderers ]] || { echo '{}'; return; }
-  for file in "$config_dir"/renderers/*.json; do
+  [[ -d $agent_config/renderers ]] || { echo '{}'; return; }
+  for file in "$agent_config"/renderers/*.json; do
     [[ -f $file ]] || continue
     jq -sce '
       def source: type == "object" and (
@@ -328,10 +406,84 @@ def parts:
 JQ
 )
 
-command -v "$toon_cmd" >/dev/null && command -v jq >/dev/null || offline
+# --- the Install, as the launcher left it: settings, zones, timer ---
+conf_get() { # name, default
+  local v
+  v=$(sed -n "s/^$1=//p" "$launcher_conf" 2>/dev/null | tail -n 1)
+  echo "${v:-$2}"
+}
+install_doc=null
+if $install; then
+  timer_active=null
+  timer_next=null
+  if command -v "$systemctl_" >/dev/null; then
+    if "$systemctl_" --user is-active --quiet spaceturtle.timer 2>/dev/null; then timer_active=true; else timer_active=false; fi
+    timer_next=$("$systemctl_" --user list-timers spaceturtle.timer --all --output json 2>/dev/null \
+      | jq -c '[.[] | select(.unit == "spaceturtle.timer") | .next | numbers | select(. > 0) | . / 1000000 | floor] | first // null' 2>/dev/null)
+    [[ -n $timer_next ]] || timer_next=null
+  fi
+  last_unattended=null
+  if [[ -s $state_dir/last-unattended ]]; then
+    last_unattended=$(date -d "$(<"$state_dir/last-unattended")" +%s 2>/dev/null) || last_unattended=null
+  fi
+  install_doc=$(jq -cn --arg connector "$connector_state" --arg agent "$agent_state" \
+    --arg timer "$(conf_get timer on)" --arg interval "$(conf_get interval 6h)" \
+    --argjson active "$timer_active" --argjson next "$timer_next" --argjson last "$last_unattended" \
+    --arg model "$(conf_get model "")" --arg ceiling "$(conf_get ceiling 1)" \
+    --arg network "$(sed -n 's/.*--network \([a-z]*\).*/\1/p' <<<"$(conf_get init "")")" '
+    {present: true, network: $network, connector_zone: $connector,
+     agent_zone: (if $agent == "running" then "in a session" elif $agent == "stopped" then "idle" else $agent end),
+     supervisor: null,
+     timer: {on: ($timer == "on"), interval: $interval, active: $active, next: $next, last_unattended: $last},
+     model: $model, ceiling: $ceiling, apps: [], waiting_apps: [], earnings: null, agent_key: null}' 2>/dev/null) || install_doc=null
+fi
+
+node_reachable && command -v jq >/dev/null || offline
 messages=$(read_messages)
 status=$(toon_json status --json)
 relay_config=$(toon_json relay config --json)
+# toon 0.2.0 reads a TOON app's connector's log by name; an older toon the node's.
+log_app=$(jq -r '.agent_node.toon_apps[0].name // empty' <<<"$status" 2>/dev/null)
+logs=null
+[[ -z $log_app ]] || logs=$(toon_json logs --json --connector --lines 20 -- "$(sh_quote "$log_app")")
+[[ $logs != null ]] || logs=$(toon_json logs --json)
+channels=$(toon_json channel list --json)
+packets=$(toon_json packet count --json)
+# The agent key's public half, scope and limits; a private half, were one ever
+# printed, is dropped before anything is read.
+agent_keys=$(toon_json agent-key list --json | jq -c 'walk(if type == "object" then with_entries(select(.key | test("private|secret|seed"; "i") | not)) else . end)' 2>/dev/null)
+[[ -n $agent_keys ]] || agent_keys=null
+if $install && [[ $install_doc != null ]]; then
+  network_in_zone=$(node_sh 'cat "$HOME/.toon/agent-node/state.json"' 2>/dev/null | jq -r '.network // empty' 2>/dev/null)
+  install_doc=$(jq -c --argjson status "$status" --argjson channels "$channels" --argjson packets "$packets" \
+    --argjson keys "$agent_keys" --arg network "${network_in_zone:-}" '
+    def str: if . == null then "" elif type == "string" then . else tojson end;
+    def num: if type == "number" then . else (tonumber? // 0) end;
+    . + {network: (if $network != "" then $network elif .network != "" then .network else "devnet" end),
+      supervisor: ($status | if type == "object" then (.agent_node.supervisor.running | if type == "boolean" then . else null end) else null end),
+      apps: ($status | if type == "object" then [.agent_node.toon_apps[]? as $t | $t.apps[]? | objects
+        | {name: (.name | str), running: (.running == true), price: (.price | str), image: (.image | str), toon_app: ($t.name | str)}] else [] end),
+      waiting_apps: ($status | if type == "object" then [.. | objects | .pending_apps? | arrays | .[] | objects
+        | select((.name // "") != "" and (.state // .status // "pending") == "pending" and (.refused // null) == null)
+        | {name, image: (.image // .url // "" | str), since: (.requested_at // .asked_at // .since // .created_at // .at // null),
+           secrets: [.secrets.variables[]?, .secrets.files[]? | strings],
+           asks: ([(.price | select(. != null and . != 0) | "price \(.)"),
+                   ([.variables[]? | strings] | select(length > 0) | "variables " + join(" ")),
+                   (select(.allowances.allow_egress == true) | "the network"),
+                   ([.secrets.variables[]?, .secrets.files[]? | strings] | select(length > 0) | "secrets " + join(" "))] | join("; "))}]
+        | unique_by(.name) else [] end),
+      earnings: (if ($channels | type) != "object" and ($packets | type) != "object" then null else
+        {received: ($channels | if type == "object" then ([.channels[]? | select(.direction == "inbound") | .watermark | num] | add // 0) else null end),
+         landed: ($channels | if type == "object" then ([.channels[]? | select(.direction == "inbound") | .landed | num] | add // 0) else null end),
+         fees: ($packets | if type == "object" then (.fees_earned | str) else null end),
+         packets: ($packets | if type == "object" then (.packets.fulfilled | num) else null end)} end),
+      agent_key: ($keys | if type != "object" and type != "array" then null else
+        ((if type == "array" then . else (.agent_keys // .keys // []) end) | map(objects) | first
+         | if . == null then null else {public_key: (.public_key // .id | str), scope: [.scope[]? | strings],
+             per_command: (.spending_limit.per_command | str), per_day: (.spending_limit.per_day | str),
+             toon_apps: [.toon_apps[]? | strings]} end) end)}' <<<"$install_doc" 2>/dev/null) || install_doc=null
+  [[ -n $install_doc ]] || install_doc=null
+fi
 
 # The node's state, from free commands only. Each group is mapped on its own, so
 # a group whose command failed, or whose answer has a shape not understood, is
@@ -341,15 +493,15 @@ incoming=$(toon_json relay subscriptions --incoming --json)
 if [[ $status == null ]] || jq -e '.agent_node | type == "object"' <<<"$status" >/dev/null 2>&1; then
   state=$(jq -cn --argjson status "$status" --argjson relay "$relay_config" \
     --argjson peers "$(toon_json peer list --json)" \
-    --argjson channels "$(toon_json channel list --json)" \
+    --argjson channels "$channels" \
     --argjson routes "$(toon_json route list --json)" \
     --argjson limits "$(toon_json limit show --json)" \
-    --argjson packets "$(toon_json packet count --json)" \
+    --argjson packets "$packets" \
     --argjson rejected "$(toon_json packet list --json)" \
     --argjson history "$(toon_json packet history --json)" \
     --argjson held "$(toon_json relay subscriptions --json)" \
     --argjson incoming "$incoming" \
-    --argjson logs "$(toon_json logs --json)" '
+    --argjson logs "$logs" '
     def str: if . == null then "" elif type == "string" then . else tojson end;
     def count: if type == "number" then . else (tonumber? // 0) end;
     def items(key): if . == null then null
@@ -362,9 +514,10 @@ if [[ $status == null ]] || jq -e '.agent_node | type == "object"' <<<"$status" 
     {
       status: ($status | group(.agent_node as $n | {
         supervisor: ($n.supervisor | process),
-        connector: ($n.connector | process),
+        # toon 0.2.0 has a connector for each TOON app; the first is the one of the node.
+        connector: (($n.connector // $n.toon_apps[0].connector) | process),
         apps: [$n.toon_apps[]?.apps[]? | {name: (.name | str), running: (.running == true),
-          restarts: (.restarts // .restart_count // 0 | count)}]
+          restarts: (.restarts // .restart_count // 0 | count), price: (.price | str), image: (.image | str)}]
       })),
       relay: ($relay | group({
         name: (.relay.name // .name | str),
@@ -378,13 +531,14 @@ if [[ $status == null ]] || jq -e '.agent_node | type == "object"' <<<"$status" 
         peer: (.peer // .peer_id // .counterparty // .id | str),
         direction: (.direction | str), status: (.status // .state | str),
         collateral: (.collateral // .capacity // .deposit | str)}])),
-      routes: ($routes | group(items("routes") | [.[] | {
+      # toon 0.2.0 lists the routes of the node and the ones it forwards apart.
+      routes: ($routes | group((items("routes") + (if type == "object" then (.forwarding_routes // []) else [] end)) | [.[] | {
         prefix: (.prefix // .destination // .route | str),
-        peer: (.peer // .next_hop // .via | str), price: (.price // .rate | str)}])),
+        peer: (.peer // .next_hop // .via // .peer_id // .handler_url | str), price: (.price // .rate | str)}])),
       limits: ($limits | group({
         per_command: (.per_command // .limits.per_command // .command | str),
         per_day: (.per_day // .limits.per_day // .daily // .day | str),
-        remaining_today: (.remaining_today // .remaining | str)})),
+        remaining_today: (.remaining_today // .limits.remaining_today // .remaining | str)})),
       packets: ($packets | group(
         if (.packets.fulfilled | type) == "number" and (.packets.rejected | type) == "number"
           and (.rejects | type) == "object" and all(.rejects[]; type == "number")
@@ -410,7 +564,11 @@ if [[ $status == null ]] || jq -e '.agent_node | type == "object"' <<<"$status" 
       subscriptions: (if $held == null and $incoming == null then null else {
         held: ($held | group(items("subscriptions") | [.[] | str])),
         incoming: ($incoming | group(items("subscriptions") | length))} end),
-      logs: ($logs | group(items("lines") | [.[-20:][] | (if type == "object" then (.message // .line // .) else . end) | str]))
+      # A line the connector wrote as JSON is read for its time, level and message.
+      logs: ($logs | group(items("lines") | [.[-20:][] | (if type == "object" then (.message // .line // .) else . end) | str
+        | ((try fromjson catch null) as $j | if ($j | type) == "object" and (($j.fields.message // $j.message) | type) == "string"
+           then [($j.timestamp | strings | .[11:19]), ($j.level | strings | ascii_downcase), ($j.fields.message // $j.message)] | map(select(. != null and . != "")) | join("  ")
+           else . end)]))
     }' 2>/dev/null) || state=null
 fi
 
@@ -419,7 +577,8 @@ fi
 # what the snapshot held of them. Without a state nothing is read or written.
 if [[ $state != null ]]; then
   old=$(jq -c 'if type == "object" then . else null end' "$snapshot" 2>/dev/null)
-  result=$(jq -cn --argjson old "${old:-null}" --argjson state "$state" --argjson now "$now" --argjson gap "$((interval * 4))" '
+  result=$(jq -cn --argjson old "${old:-null}" --argjson state "$state" --argjson now "$now" --argjson gap "$((interval * 4))" \
+    --argjson install "${install_doc:-null}" --arg source "$($install && echo install || echo host)" '
     def keyed(f): map({(f): .}) | add // {};
     def entry($group; $name; $text): {group: $group, name: $name, text: $text};
     # Entries for what was added, removed and changed between two lists.
@@ -431,11 +590,15 @@ if [[ $state != null ]]; then
         + [$b | to_entries[] | select($a[.key] != null and $a[.key] != .value) | .value | changed] end;
     def blank: if . == "" then null else . end;
     ($state.limits.remaining_today | blank) as $left
+    # The apps and the ones waiting for the Observer, from the Install when there is one.
+    | ($state.status.apps | if . == null then null else map({name, running}) end) as $apps
+    | ($install | if type == "object" then [.waiting_apps[] | {name, image}] else null end) as $waiting
     | {peers: $state.peers, channels: $state.channels, routes: $state.routes,
-       prices: $state.relay.prices, remaining: $left} as $cur
+       prices: $state.relay.prices, remaining: $left, apps: $apps, waiting: $waiting} as $cur
     | ($old // {}) as $o
-    | ([$cur | to_entries[] | {(.key): (.value // $o[.key])}] | add) as $new
-    | (if $old != null then
+    | ([$cur | to_entries[] | {(.key): (.value // $o[.key])}] | add + {source: $source}) as $new
+    # A snapshot of another node (an Install made since, say) is not compared.
+    | (if $old != null and ($o.source // "host") == $source then
         delta($o.peers; $new.peers; (.id + "|" + .direction);
           entry("Peerings"; .id; "Peering with \(.id) added");
           entry("Peerings"; .id; "Peering with \(.id) removed");
@@ -452,6 +615,14 @@ if [[ $state != null ]]; then
           entry("Relay"; "Price " + .name; "Price \(.name) set to \(.price)");
           entry("Relay"; "Price " + .name; "Price \(.name) removed");
           entry("Relay"; "Price " + .name; "Price \(.name) changed to \(.price)"))
+        + delta($o.apps; $new.apps; .name;
+          entry("Apps"; .name; "App \(.name) added");
+          entry("Apps"; .name; "App \(.name) removed");
+          entry("Apps"; .name; "App \(.name) is now \(if .running then "running" else "stopped" end)"))
+        + delta($o.waiting; $new.waiting; .name;
+          entry("Waiting for your approval"; .name; "App \(.name) waits for your approval");
+          entry("Waiting for your approval"; .name; "App \(.name) no longer waits for approval");
+          entry("Waiting for your approval"; .name; "App \(.name) asks for another image"))
         + (if $o.remaining != null and $new.remaining != null and $o.remaining != $new.remaining
             then [entry("Spending limit"; "Left today";
               (if ($new.remaining | tonumber? // 1) <= 0 then "Spending limit used up for today"
@@ -531,11 +702,8 @@ mention_events='[]'
 [[ -n $self ]] && mention_events=$(relay_query "{\"#p\":[\"$self\"],\"limit\":$limit}")
 
 # The node's ILP address and connector address, from the relay's NIP-11 document.
-node=
-if command -v curl >/dev/null; then
-  node=$(curl -fsS --max-time 5 -H 'Accept: application/nostr+json' "http://$read_address" 2>/dev/null |
-    jq -c '{ilp_address: (.ilp_address | strings // ""), connector: (.connector | strings // "")}' 2>/dev/null)
-fi
+node=$(node_sh "curl -fsS --max-time 5 -H 'Accept: application/nostr+json' $(sh_quote "http://$read_address")" 2>/dev/null |
+  jq -c '{ilp_address: (.ilp_address // .toon.ilp_address | strings // ""), connector: (.connector // .toon.connector_url | strings // "")}' 2>/dev/null)
 
 # Who holds a subscription to this relay's live feed; null while it is not sold.
 subscribers=$(jq -c 'if . == null then null else ([.. | arrays] | first // [] | length) end' <<<"$incoming" 2>/dev/null)
@@ -551,6 +719,7 @@ jq -cn --arg name "${name:-}" --arg self "$self" \
   --argjson requests "${requests:-[]}" --argjson messages "${messages:-$no_messages}" \
   --argjson answered "$(request_activity "$self" "${requests:-[]}")" \
   --argjson changes "$changes" --argjson urgent "$urgent" \
+  --argjson install "${install_doc:-null}" \
   '# The "e" tag marked "reply" (NIP-10), else the last one.
   def ref: '"$ref_of"';
   ([$agent[], $events[], $context[]] | unique_by(.id)) as $all
@@ -581,7 +750,7 @@ jq -cn --arg name "${name:-}" --arg self "$self" \
     activity: (($activity + $changes) | sort_by(-.created_at)), last_active: ($activity[0].created_at? // null),
     urgent: $urgent,
     node: ($node // {ilp_address: "", connector: ""}),
-    requests: $requests, messages: $messages, subscribers: $subscribers, state: $state, profiles: $profiles, follows: ([$own_follows[], $follows[]] | unique_by(.id)),
+    requests: $requests, messages: $messages, subscribers: $subscribers, state: $state, install: $install, profiles: $profiles, follows: ([$own_follows[], $follows[]] | unique_by(.id)),
     events: ($events | map(select(.pubkey != $self)) | mark),
     context: ($context | map(select(.id as $i | ($events | map(.id) | index($i)) == null and ($agent | map(.id) | index($i)) == null)) | mark),
     looked_at: $looked,

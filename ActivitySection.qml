@@ -15,6 +15,8 @@ Item {
   readonly property color dim: Qt.darker(Color.foreground, 1.5)
 
   readonly property bool known: service.selfPubkey !== ""
+  readonly property var hints: [["j/k", "move"], ["Enter", "open"], ["a", "agent's page"], ["y", "copy"], ["u", "copy media"], ["p", "play"]]
+  readonly property bool typing: false
   readonly property int cursor: Math.max(0, Math.min(service.activityCursor, service.activity.length - 1))
   property bool scrollOnCursor: true
 

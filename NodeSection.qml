@@ -2,9 +2,12 @@ import QtQuick
 import qs.Commons
 import qs.Ui
 
-// The Node section: the agent node's state, read with free `toon` commands, in
-// groups. One cursor runs down every row; Enter or a click copies the row's
-// value. Where it is lives on the service, so it survives the panel closing.
+// The Node section: the Install as the launcher left it (zones, timer, apps,
+// what waits for approval, earnings, agent key), then the agent node's state,
+// read with free `toon` commands, in groups. One cursor runs down every row;
+// Enter or a click copies the row's value, which for an app that waits is the
+// command that approves it. Where the cursor is lives on the service, so it
+// survives the panel closing.
 Item {
   id: root
 
@@ -13,7 +16,20 @@ Item {
   readonly property color dim: Qt.darker(Color.foreground, 1.5)
 
   readonly property var node: service.nodeState
+  readonly property var install: service.installPresent ? service.install : null
   readonly property string balancesText: "not shown: needs the passphrase"
+  readonly property var hints: [["j/k", "move"], ["Enter", "copy"]]
+  readonly property bool typing: false
+
+  // Why nothing of the node can be read, and what to do; "" while it can.
+  readonly property string absentText: {
+    if (!service.loaded) return "Loading…"
+    if (node) return ""
+    if (!install) return "No agent node. Make an Install with spaceturtle start, or run toon up."
+    if (install.connector_zone !== "running") return "The connector's zone is " + install.connector_zone + ", so the node cannot be read. Bring it back with spaceturtle start."
+    if (install.supervisor === false) return "The supervisor is not running, so the node cannot be read. Run spaceturtle start."
+    return "The node does not answer. journalctl --user -u spaceturtle-connector says why."
+  }
 
   function yesNo(value) { return value === null || value === undefined ? "unknown" : (value ? "running" : "stopped") }
   function plural(n, one, many) { return n + " " + (n === 1 ? one : many) }
@@ -45,13 +61,77 @@ Item {
   readonly property var rows: {
     var list = []
     var st = node
-    if (!st) return list
     var current = ""
     function group(name) { current = name; list.push({ group: name }) }
     function row(label, value) { list.push({ label: label, value: String(value), under: current }) }
     function note(text) { list.push({ label: "", value: text, note: true, under: current }) }
     function unavailable() { note("unavailable") }
     function none() { note("none") }
+    function units(n) { return n === null || n === undefined || n === "" ? "–" : String(n) }
+
+    // ---------- The Install, as the launcher left it ----------
+    var inst = install
+    if (inst) {
+      group("Install")
+      row("Network", inst.network || "devnet")
+      row("Connector's zone", inst.connector_zone)
+      row("Supervisor", inst.supervisor === null ? "unknown" : (inst.supervisor ? "running" : "not running"))
+      row("Agent's zone", inst.agent_zone)
+      var timer = inst.timer || {}
+      var timerText = timer.on ? "on, every " + timer.interval : "off"
+      if (timer.on && timer.active === false) timerText += " (not armed: spaceturtle start)"
+      else if (timer.on && service.nextSession > 0) timerText += ", next session " + service.inWords(service.nextSession)
+      row("Timer", timerText)
+      row("Last session", typeof timer.last_unattended === "number" ? ago(new Date(timer.last_unattended * 1000).toISOString()) + ", unattended" : "no unattended one yet")
+      row("Model", inst.model || "–")
+      row("Ceiling", "$" + inst.ceiling + " of model cost per unattended session")
+
+      group("Apps")
+      var apps = inst.apps || []
+      if (!st) note("cannot be read now")
+      else if (apps.length === 0) none()
+      else for (var ai = 0; ai < apps.length; ai++) {
+        var app = apps[ai]
+        row(app.name, joined([app.running ? "running" : "stopped", app.price !== "" ? "price " + app.price : "", app.image]))
+      }
+
+      var waiting = inst.waiting_apps || []
+      if (waiting.length > 0) {
+        group("Waiting for your approval")
+        for (var wi = 0; wi < waiting.length; wi++) {
+          var w = waiting[wi]
+          row(w.name, joined([w.image, w.asks ? "asks for " + w.asks : "asks for nothing more"]))
+          row("", "spaceturtle approve " + w.name)
+          row("", "spaceturtle refuse " + w.name)
+        }
+        note("The agent cannot start these. Enter copies the command; run it in a terminal")
+      }
+
+      group("Earnings")
+      var earn = inst.earnings
+      if (!earn) note(st ? "unavailable" : "cannot be read now")
+      else {
+        row("Received", units(earn.received) + (earn.landed !== null && earn.landed !== undefined ? " (" + earn.landed + " landed)" : ""))
+        row("This run", units(earn.fees) + " in fees, " + units(earn.packets) + (earn.packets === 1 ? " packet" : " packets"))
+        note("In the token's base units. This run is since the connector last started")
+      }
+
+      group("Agent key")
+      var key = inst.agent_key
+      if (!key) note(st ? "none: spaceturtle agent-key replace makes one" : "cannot be read now")
+      else {
+        row("Public key", key.public_key || "–")
+        row("Scope", (key.scope || []).length > 0 ? key.scope.join(", ") : "–")
+        row("Per command", units(key.per_command))
+        row("Per day", units(key.per_day))
+        note("What is left today is read by the key, in a session's sidebar")
+      }
+    }
+
+    if (!st) {
+      if (inst) { group("Node"); note(absentText) }
+      return list
+    }
 
     group("Processes")
     if (!st.status) unavailable()
@@ -90,7 +170,8 @@ Item {
     else for (var r = 0; r < st.routes.length; r++)
       row(st.routes[r].prefix, joined([st.routes[r].peer, st.routes[r].price !== "" ? "price " + st.routes[r].price : ""]))
 
-    group("Spending limit")
+    // In an Install this is the limit of the node itself; the agent's is its key's.
+    group(inst ? "Node's spending limit" : "Spending limit")
     if (!st.limits) unavailable()
     else {
       row("Per command", st.limits.per_command || "–")
@@ -153,10 +234,11 @@ Item {
     return list
   }
 
-  // The cursor's targets are the rows that are not group headings.
+  // The cursor's targets are the rows that hold a value: not a group heading,
+  // not a note said of a group.
   readonly property var targets: {
     var list = []
-    for (var i = 0; i < rows.length; i++) if (rows[i].group === undefined) list.push(i)
+    for (var i = 0; i < rows.length; i++) if (rows[i].group === undefined && rows[i].note !== true) list.push(i)
     return list
   }
   readonly property int cursor: Math.max(0, Math.min(service.nodeCursor, targets.length - 1))
@@ -237,15 +319,15 @@ Item {
     onTriggered: root.copiedIndex = -1
   }
 
-  // No agent node: say so, and how to start one.
+  // No agent node and no Install: say so, and how to start one.
   Text {
-    visible: !root.node
+    visible: root.rows.length === 0
     anchors.centerIn: parent
     width: parent.width
     horizontalAlignment: Text.AlignHCenter
     wrapMode: Text.Wrap
     textFormat: Text.PlainText
-    text: !root.service.loaded ? "Loading…" : "No agent node is running. Start one with: toon up"
+    text: root.absentText
     color: root.dim
     font.family: Style.font.family
     font.pixelSize: Style.font.bodySmall
@@ -254,7 +336,7 @@ Item {
 
   Flickable {
     id: scroll
-    visible: !!root.node
+    visible: root.rows.length > 0
     anchors.fill: parent
     contentWidth: width
     contentHeight: column.implicitHeight
@@ -277,21 +359,16 @@ Item {
           readonly property int target: root.targets.indexOf(index)
 
           width: parent ? parent.width : 0
-          height: heading ? headingText.implicitHeight + Style.space(16) : rowSurface.height
+          height: heading ? headingText.implicitHeight + Style.space(entry.index === 0 ? 6 : 18) : rowSurface.height
 
-          Text {
+          PanelSectionHeader {
             id: headingText
             visible: entry.heading
-            textFormat: Text.PlainText
             anchors.left: parent.left
             anchors.leftMargin: Style.spacing.lg
             anchors.bottom: parent.bottom
             anchors.bottomMargin: Style.space(4)
-            text: entry.heading ? entry.modelData.group.toUpperCase() : ""
-            color: root.dim
-            font.family: Style.font.family
-            font.pixelSize: Style.font.caption
-            font.letterSpacing: 1
+            text: entry.heading ? entry.modelData.group : ""
           }
 
           CursorSurface {

@@ -40,7 +40,12 @@ BarWidget {
       }
     }
     opacity: root.online ? 1.0 : 0.45
-    tooltipText: ""
+    // Who this is and how it is, without opening the panel.
+    tooltipText: root.service
+      ? (root.service.persona ? root.service.persona.name + " · " : "") + root.service.summary
+        + (root.service.waitingCount > 0 ? " · " + root.service.waitingCount + " Request" + (root.service.waitingCount === 1 ? "" : "s") + " waiting" : "")
+        + (root.service.waitingApps > 0 ? " · " + root.service.waitingApps + " app" + (root.service.waitingApps === 1 ? "" : "s") + " waiting for approval" : "")
+      : ""
     onPressed: function(b) {
       if (b === Qt.MiddleButton) { if (root.service) root.service.refresh() }
       else root.togglePanel()

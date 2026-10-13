@@ -6,11 +6,13 @@ No plugin release is needed.
 
 ## Where the files go
 
-One JSON file per kind, in `~/.config/spaceturtle/renderers/`.
+One JSON file per kind, in `~/.config/spaceturtle/renderers/` as the agent sees it. In an
+Install that directory is `~/.local/state/spaceturtle/agent/config/renderers/` on your
+machine, mounted into the agent's zone; the panel reads it there.
 
 - Every refresh reads the directory afresh, so a new or changed file shows after the next
   refresh, with no restart.
-- `SPACETURTLE_CONFIG_DIR`, else `$XDG_CONFIG_HOME/spaceturtle`, moves
+- Without an Install, `SPACETURTLE_CONFIG_DIR`, else `$XDG_CONFIG_HOME/spaceturtle`, moves
   `~/.config/spaceturtle`.
 
 ## An example

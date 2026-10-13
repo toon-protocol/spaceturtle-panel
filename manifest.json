@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "toon.spaceturtle",
   "name": "Spaceturtle",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "author": "TOON Protocol",
   "description": "The main UI of a TOON agent node: a turtle in the bar and a floating panel",
   "kinds": [

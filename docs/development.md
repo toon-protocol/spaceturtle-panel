@@ -11,8 +11,11 @@ defines the words used here.
 against a stub `toon` and `curl`, in a temporary home, and checks that a Request answered
 the way the
 [`being-observed`](https://github.com/toon-protocol/spaceturtle/blob/main/skills/being-observed/SKILL.md)
-skill says shows as done or declined. It needs bash and `jq`, and is what the `gate` job of
-`.github/workflows/ci.yml` runs.
+skill says shows as done or declined. An Install is tested with a stub `msb` that lists
+zones from a file and runs `exec … -- sh -c` with the stub `toon` as the zone's, and a
+stub `systemctl` for the timer; the tests check that nothing is run on a stopped zone,
+that no zone is started, and that no command is given the passphrase. It needs bash and
+`jq`, and is what the `gate` job of `.github/workflows/ci.yml` runs.
 
 ## Demo data
 
@@ -28,13 +31,16 @@ the panel without an agent node.
 | `BarWidget.qml` | The turtle in the bar |
 | `Panel.qml` | The floating window, its keys and its sections |
 | `SectionTabs.qml`, `ActivitySection.qml`, `NetworkSection.qml`, `MessagesSection.qml`, `RequestsSection.qml`, `NodeSection.qml`, `PersonaSection.qml` | The section tabs; what the agent did; the feed and the author pages; the agent's private conversations; the Requests; the node's state; who this Install is |
-| `Avatar.qml`, `MediaStrip.qml`, `TurtleIcon.qml` | Profile picture, an event's pictures, videos and sounds, and the icon |
+| `Avatar.qml`, `MediaStrip.qml`, `TurtleIcon.qml`, `KeyHints.qml` | Profile picture, an event's pictures, videos and sounds, the icon, and the keys named along the bottom |
 | `mark-seen` | Records that you looked (opening the panel runs it), in `~/.local/state/spaceturtle/last-looked` |
-| `relay-events` | Prints the agent's activity, the relay's other events, each event with its resolved parts (label, title, summary, body, links, ref) and what it refers to and what refers to it, the events a thread needs beyond the limit, profiles, the Persona (the agent identity's newest profile with a name, or `null`), follow lists, node addresses, the node's state, the Requests and the agent's private messages (grouped into conversations, or why they cannot be read) as one JSON document, with its `attention` state (`none`, `news`, `urgent`) |
+| `relay-events` | Prints the agent's activity, the relay's other events, each event with its resolved parts (label, title, summary, body, links, ref) and what it refers to and what refers to it, the events a thread needs beyond the limit, profiles, the Persona (the agent identity's newest profile with a name, or `null`), follow lists, node addresses, the node's state, the Install (zones, timer, apps, what waits for approval, earnings, agent key, or `null` without one), the Requests and the agent's private messages (grouped into conversations, or why they cannot be read) as one JSON document, with its `attention` state (`none`, `news`, `urgent`). In an Install every node command runs in the connector's zone through `msb exec` |
 | `request` | Writes a Request into the queue, or withdraws a waiting one |
 | `tests/run` | The tests of `relay-events`, `mark-seen` and `request` |
 
 Saving a file in an installed copy reloads the plugin. If a change does not show, run `omarchy restart shell`.
+To work on a clone, replace `~/.config/omarchy/plugins/toon.spaceturtle` with a symlink to
+it. The shell does not watch files through the link, so run `omarchy restart shell` after
+a change.
 
 ## Omarchy version
 

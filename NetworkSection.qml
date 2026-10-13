@@ -28,6 +28,11 @@ Item {
   // Notes, comments and long-form posts: what can be replied to, reacted to or reposted.
   function isNote(event) { return !!event && [1, 1111, 30023].indexOf(event.kind) !== -1 }
   readonly property bool viewingSelf: authorPage && profilePubkey === service.selfPubkey
+  readonly property var hints: threadView
+    ? [["j/k", "move"], ["Enter", "author"], ["w/e/b", "reply/react/repost"], ["y", "copy"], ["Esc", "back"]]
+    : (authorPage
+      ? [["j/k", "move"], ["Enter", "thread/copy"], ["f", viewingSelf ? "" : "follow"], ["o", "open link"], ["Esc", "back"]].filter(function(h) { return h[1] !== "" })
+      : [["j/k", "move"], ["Enter", "thread"], ["a", "author"], ["w/e/b", "reply/react/repost"], ["y", "copy"]])
 
   // The "LABEL value" lines of an author page that have a value.
   readonly property var details: {
