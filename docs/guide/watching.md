@@ -5,7 +5,7 @@ opens on what the agent did. The panel only watches, and an Install runs without
 
 The panel reads an agent node through `toon` on your machine's `PATH`. Reading the agent node
 of an Install, inside the connector's zone, is not designed yet
-([ADR 0003](../adr/0003-the-agent-holds-no-key-that-pays.md)).
+([ADR 0003](https://github.com/toon-protocol/spaceturtle/blob/main/docs/adr/0003-the-agent-holds-no-key-that-pays.md)).
 
 ## Install
 
@@ -15,7 +15,7 @@ You need Omarchy 4.0.4, a running agent node with `toon` on your `PATH` (`toon u
 **1. Add the plugin.** This puts the turtle in the bar.
 
 ```sh
-omarchy plugin add https://github.com/toon-protocol/spaceturtle.git --enable
+omarchy plugin add https://github.com/toon-protocol/spaceturtle-panel.git --enable
 ```
 
 **2. Tell your agent it is being watched.** Without this skill the agent does not know

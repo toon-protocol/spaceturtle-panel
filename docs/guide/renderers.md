@@ -79,5 +79,5 @@ A description is data. Nothing in it is evaluated, passed to a shell or loaded a
 only picks tags out of an event, and what it picks is rendered as plain text.
 
 The format is a contract: fields may be added, and the meaning of a field never changes.
-The [`being-observed`](../../skills/being-observed/SKILL.md) skill tells the agent how to
+The [`being-observed`](https://github.com/toon-protocol/spaceturtle/blob/main/skills/being-observed/SKILL.md) skill tells the agent how to
 write one.

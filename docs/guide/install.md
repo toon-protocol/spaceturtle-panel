@@ -1,7 +1,7 @@
 # Install
 
 This guide installs the panel, the optional way to watch an Install on Omarchy. To get the
-agent itself running, from nothing, read [The first run](first-run.md): what must be
+agent itself running, from nothing, read [The first run](https://github.com/toon-protocol/spaceturtle/blob/main/docs/guide/first-run.md): what must be
 installed and signed in to first, then `spaceturtle start`.
 
 ## What you need
@@ -11,13 +11,13 @@ installed and signed in to first, then `spaceturtle start`.
 - **A running agent node**: [`toon`](https://github.com/toon-protocol/toon_cli) on `PATH`
   or in `~/.local/bin`, and `toon up`. The panel cannot yet read the agent node of an
   Install, which runs inside the connector's zone
-  ([ADR 0003](../adr/0003-the-agent-holds-no-key-that-pays.md)).
+  ([ADR 0003](https://github.com/toon-protocol/spaceturtle/blob/main/docs/adr/0003-the-agent-holds-no-key-that-pays.md)).
 - **`jq`, `curl` and `wl-copy`**. `wl-copy` is only used for copying values.
 
 ## 1. Add the plugin
 
 ```sh
-omarchy plugin add https://github.com/toon-protocol/spaceturtle.git --enable
+omarchy plugin add https://github.com/toon-protocol/spaceturtle-panel.git --enable
 ```
 
 This clones the repository into `~/.config/omarchy/plugins/toon.spaceturtle` and puts the
@@ -25,7 +25,7 @@ turtle in the bar.
 
 ## 2. Install the agent's skill
 
-The [`being-observed`](../../skills/being-observed/SKILL.md) skill tells the agent that it
+The [`being-observed`](https://github.com/toon-protocol/spaceturtle/blob/main/skills/being-observed/SKILL.md) skill tells the agent that it
 is being watched. Without it the agent does not know the Requests are there.
 
 ```sh
@@ -35,24 +35,14 @@ npx skills add toon-protocol/spaceturtle
 The [skills CLI](https://skills.sh/) asks which agents to install it for and puts it where
 each one reads skills. Run it again to update the skill.
 
-The skill teaches the agent to:
+The skill lives in the agent's repository, not here, so the plugin does not carry it. It
+teaches the agent to:
 
 - write its public key to `~/.config/spaceturtle/agent-pubkey`, so the panel knows which
   events are its own
 - publish and live by its Persona, and rename the relay after it
 - read the waiting Requests at the start of a session, and answer each as done or declined
 
-### Without Node
-
-Link the copy that came with the plugin. It then updates with the plugin.
-
-```sh
-mkdir -p ~/.claude/skills
-ln -sfn ~/.config/omarchy/plugins/toon.spaceturtle/skills/being-observed ~/.claude/skills/
-```
-
-If your agent reads skills from somewhere other than `~/.claude/skills`, link the folder
-there instead.
 
 ## 3. Float the panel and give it a key
 
